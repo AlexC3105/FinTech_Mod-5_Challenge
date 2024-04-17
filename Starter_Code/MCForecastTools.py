@@ -8,6 +8,129 @@ import pytz
 
 class MCSimulation:
     """
+    A Python class for running Monte Carlo simulation on portfolio price data.
+
+    Attributes
+    ----------
+    portfolio_data : pandas.DataFrame
+        Portfolio dataframe.
+    weights: list(float)
+        Portfolio investment breakdown.
+    nSim: int
+        Number of samples in simulation.
+    nTrading: int
+        Number of trading days to simulate.
+    simulated_return : pandas.DataFrame
+        Simulated data from Monte Carlo.
+    confidence_interval : pandas.Series
+        The 95% confidence intervals for simulated final cumulative returns.
+    """
+
+    DEFAULT_TRADING_DAYS = 252
+    DEFAULT_SIMULATIONS = 1000
+
+    def __init__(self, portfolio_data, weights=None, num_simulation=DEFAULT_SIMULATIONS, num_trading_days=DEFAULT_TRADING_DAYS):
+        """
+        Constructs all the necessary attributes for the MCSimulation object.
+
+        Parameters
+        ----------
+        portfolio_data: pandas.DataFrame
+            DataFrame containing stock price information from Alpaca API
+        weights: list(float) or None
+            A list fractions representing percentage of total investment per stock. Default is equally distributed.
+        num_simulation: int
+            Number of simulation samples.
+        num_trading_days: int
+            Number of trading days to simulate.
+        """
+        
+        if not isinstance(portfolio_data, pd.DataFrame):
+            raise TypeError("portfolio_data must be a Pandas DataFrame")
+
+        if weights is None:
+            num_stocks = len(portfolio_data.columns.get_level_values(0).unique())
+            weights = [1.0 / num_stocks] * num_stocks
+        elif sum(weights) != 1:
+            raise ValueError("Sum of portfolio weights must equal one.")
+
+        self.portfolio_data = portfolio_data
+        self.weights = weights
+        self.nSim = num_simulation
+        self.nTrading = num_trading_days
+        self.simulated_return = pd.DataFrame()
+
+    def calc_cumulative_return(self):
+        """
+        Calculates the cumulative return of a stock over time using a Monte Carlo simulation (Brownian motion with drift).
+        """
+        last_prices = self.portfolio_data.xs('close', level=1, axis=1).iloc[-1]
+        daily_returns = self.portfolio_data.xs('daily_return', level=1, axis=1)
+        mean_returns = daily_returns.mean()
+        std_returns = daily_returns.std()
+
+        # Initialize empty DataFrame to hold simulated prices
+        portfolio_cumulative_returns = pd.DataFrame()
+
+        # Run the simulation of projecting stock prices 'nSim' number of times
+        for n in range(self.nSim):
+            simulated_prices = [last_prices.values]
+            for _ in range(self.nTrading):
+                price_step = simulated_prices[-1] * (1 + np.random.normal(mean_returns, std_returns))
+                simulated_prices.append(price_step)
+            simulated_prices = pd.DataFrame(simulated_prices).T
+            portfolio_cumulative_returns[n] = simulated_prices.apply(lambda x: (x / x[0]).cumprod()).iloc[-1]
+
+        self.simulated_return = portfolio_cumulative_returns
+        self.confidence_interval = portfolio_cumulative_returns.quantile([0.025, 0.975], axis=1)
+
+        return portfolio_cumulative_returns
+
+    def plot_simulation(self):
+        """
+        Visualizes the simulated stock trajectories using calc_cumulative_return method.
+        """ 
+        if self.simulated_return.empty:
+            raise ValueError("Simulation not run yet. Call calc_cumulative_return first.")
+        
+        return self.simulated_return.T.plot(legend=None, title=f"{self.nSim} Simulations of Cumulative Portfolio Return Trajectories Over the Next {self.nTrading} Trading Days.")
+
+    def plot_distribution(self):
+        """
+        Visualizes the distribution of cumulative returns simulated using calc_cumulative_return method.
+        """
+        if self.simulated_return.empty:
+            raise ValueError("Simulation not run yet. Call calc_cumulative_return first.")
+        
+        plot_title = f"Distribution of Final Cumulative Returns Across All {self.nSim} Simulations"
+        ax = self.simulated_return.T.plot(kind='hist', bins=50, density=True, alpha=0.75, title=plot_title)
+        ax.axvline(self.confidence_interval.iloc[0], color='r')
+        ax.axvline(self.confidence_interval.iloc[1], color='r')
+        return ax
+
+    def summarize_cumulative_return(self):
+        """
+        Calculate final summary statistics for Monte Carlo simulated stock data.
+        """
+        if self.simulated_return.empty:
+            raise ValueError("Simulation not run yet. Call calc_cumulative_return first.")
+        
+        metrics = self.simulated_return.describe()
+        ci_series = pd.Series(self.confidence_interval, index=["95% CI Lower", "95% CI Upper"])
+        return metrics.append(ci_series)
+
+
+'''
+# Import libraries and dependencies
+import numpy as np
+import pandas as pd
+import os
+import alpaca_trade_api as tradeapi
+import datetime as dt
+import pytz
+
+class MCSimulation:
+    """
     A Python class for runnning Monte Carlo simulation on portfolio price data. 
     
     ...
@@ -170,3 +293,4 @@ class MCSimulation:
         ci_series = self.confidence_interval
         ci_series.index = ["95% CI Lower","95% CI Upper"]
         return metrics.append(ci_series)
+'''
